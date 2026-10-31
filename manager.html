@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Listing Helper — Manager</title>
+<style>
+  :root{--bg:#f0f2f5;--card:#fff;--fg:#1c1e21;--muted:#65676b;--line:#e4e6eb;--btn:#f0f2f5;--accent:#1877f2;--warn:#b45309;--bad:#b91c1c}
+  @media (prefers-color-scheme: dark){:root{--bg:#18191a;--card:#242526;--fg:#e4e6eb;--muted:#b0b3b8;--line:#3e4042;--btn:#3a3b3c;--warn:#f59e0b;--bad:#f87171}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,sans-serif}
+  main{max-width:1200px;margin:0 auto;padding:16px}
+  h1{font-size:18px;margin:0}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
+  .bar .grow{flex:1}
+  button,select,input{font:inherit;color:var(--fg)}
+  button{padding:6px 11px;border-radius:6px;border:1px solid var(--line);background:var(--btn);cursor:pointer}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px}
+  .muted{color:var(--muted);font-size:12px}
+  .warn{color:var(--warn);font-weight:600}
+  .banner{border:1px solid var(--warn);border-radius:8px;padding:8px 12px;margin:10px 0;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .banner[hidden]{display:none}
+  .filters input,.filters select{padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--card)}
+  .filters input{min-width:240px}
+  .wrap{overflow:auto}
+  table{border-collapse:collapse;width:100%}
+  th{position:sticky;top:0;background:var(--card);text-align:left;font-size:12px;color:var(--muted);padding:8px 6px;border-bottom:1px solid var(--line)}
+  td{padding:4px 6px;border-top:1px solid var(--line);vertical-align:middle}
+  td input,td select{width:100%;padding:5px;border:1px solid transparent;border-radius:5px;background:transparent}
+  td input:hover,td select:hover{border-color:var(--line)}
+  td input:focus,td select:focus{border-color:var(--accent);background:var(--card);outline:none}
+  td select option{background:var(--card)}
+  td.id{width:48px;color:var(--muted)}
+  td.title{min-width:260px}
+  td.price{width:84px}
+  td.cond{width:140px}
+  td.cat{width:150px}
+  td.stat{width:100px}
+  td.listed{width:130px;white-space:nowrap}
+  td.ph{width:120px;white-space:nowrap}
+  td.ph img{width:28px;height:28px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:6px}
+  td.act{width:60px}
+  tr.sold td{opacity:.55}
+  .empty{padding:32px;text-align:center}
+  .empty p{margin:6px 0}
+</style>
+</head>
+<body>
+<main>
+  <div class="bar">
+    <h1>Marketplace Listing Helper</h1>
+    <span class="grow"></span>
+    <button id="new" class="primary">+ New item</button>
+    <button id="csv-btn">Import CSV</button>
+    <button id="export">Export CSV</button>
+    <button id="dir-btn">Load photos folder</button>
+    <button id="pairall" title="Pair photos to every draft that has none, by filename">Auto-pair drafts</button>
+    <button id="tpl">Templates</button>
+    <input id="csv" type="file" accept=".csv" hidden>
+    <input id="dir" type="file" webkitdirectory multiple hidden>
+  </div>
+  <div id="backup" class="banner" hidden>
+    <span id="backup-msg"></span>
+    <button id="backup-now" class="primary">Export backup</button>
+  </div>
+  <div class="bar filters">
+    <input id="search" type="search" placeholder="Search title, category, description…">
+    <select id="statusfilter">
+      <option value="">All statuses</option>
+      <option value="draft">Draft</option>
+      <option value="listed">Listed</option>
+      <option value="sold">Sold</option>
+    </select>
+    <span id="summary" class="muted"></span>
+  </div>
+  <div id="msg" class="muted" role="status" style="min-height:1.4em"></div>
+  <div class="card wrap">
+    <table id="grid">
+      <thead><tr>
+        <th>ID</th><th>Title</th><th>Price £</th><th>Condition</th><th>Category</th><th>Status</th><th>Listed</th><th>Photos</th><th></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="empty" class="empty" hidden>
+      <p><strong>No items yet.</strong></p>
+      <p class="muted">Import a CSV (see <code>sample-listings.csv</code>) or add an item to get started.</p>
+    </div>
+  </div>
+  <p class="muted">Edits here are saved straight away and show up in the Facebook panel. Photos picked here are
+    only used for pairing by filename — load the same folder in the Facebook panel to attach them when filling.</p>
+</main>
+<script src="shared.js"></script>
+<script src="manager.js"></script>
+</body>
+</html>
