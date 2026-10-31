@@ -99,12 +99,21 @@
       ph.className = "ph";
       const names = photoList(r);
       const first = names.length && findPhoto(names[0]);
-      if (first) { const img = document.createElement("img"); img.src = thumb(first); img.alt = ""; ph.appendChild(img); }
+      if (first) { const img = document.createElement("img"); thumbInto(img, first); img.alt = ""; ph.appendChild(img); }
       const n = document.createElement("span");
       n.textContent = names.length ? String(names.length) : "none";
       if (!names.length && statusOf(r) === "draft") n.className = "warn";
       ph.appendChild(n);
       tr.appendChild(ph);
+
+      const fb = document.createElement("td");
+      fb.className = "fb";
+      if (isWebUrl(get(r, "fb_url"))) {
+        const a = document.createElement("a");
+        a.href = get(r, "fb_url"); a.target = "_blank"; a.rel = "noopener"; a.textContent = "↗"; a.title = "Open the linked Facebook listing";
+        fb.appendChild(a);
+      }
+      tr.appendChild(fb);
 
       const act = document.createElement("td");
       act.className = "act";

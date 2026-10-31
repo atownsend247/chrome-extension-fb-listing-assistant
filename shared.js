@@ -72,6 +72,7 @@ const ALIASES = {
   photos: ["photos", "photo", "images", "image", "pictures"],
   status: ["status"],
   listed: ["listed", "date listed", "listed on", "listed date"],
+  fb_url: ["fb_url", "fb url", "fb link", "facebook url", "facebook link", "link", "url"],
 };
 function headerFor(key, hdrs = headers) {
   for (const a of ALIASES[key]) {
@@ -87,6 +88,7 @@ function ensureCol(key) {
 const get = (r, key) => { const h = headerFor(key); return h && r[h] != null ? String(r[h]) : ""; };
 const set = (r, key, v) => { r[ensureCol(key)] = v; };
 const rowKey = r => get(r, "id") || get(r, "title");
+const isWebUrl = u => /^https:\/\//i.test(u);
 const photoList = r => get(r, "photos").split(/[;|]/).map(s => s.trim()).filter(Boolean);
 
 function nextId() {
@@ -162,7 +164,7 @@ function withFooter(desc) {
 }
 
 // Merge a CSV into the list by id (or title). CSV values win, except
-// status/listed: a blank in the CSV keeps what the extension already has.
+// status/listed/fb_url: a blank in the CSV keeps what the extension already has.
 function mergeCSV(text) {
   const grid = parseCSV(text);
   if (!grid.length) return { added: 0, updated: 0 };
@@ -182,7 +184,7 @@ function mergeCSV(text) {
     let r = rows.find(x => rowKey(x) === k);
     if (!r) { r = {}; rows.push(r); added++; } else updated++;
     for (const [key, v] of Object.entries(norm)) {
-      if ((key === "status" || key === "listed") && !v) continue;
+      if ((key === "status" || key === "listed" || key === "fb_url") && !v) continue;
       set(r, key, v);
     }
     for (const h of extras) { if (!headers.includes(h)) headers.push(h); r[h] = cr[h]; }
@@ -208,9 +210,43 @@ function findPhoto(name) {
   const n = name.toLowerCase();
   return photos.get(n) || photos.get(n.split("/").pop()) || null;
 }
-function thumb(f) {
-  if (!thumbs.has(f)) thumbs.set(f, URL.createObjectURL(f));
-  return thumbs.get(f);
+// Thumbnails: decoding full-size phone photos for a 80px tile is what makes big folders
+// laggy, so shrink each file once (a few at a time) and reuse the small image.
+const THUMB_PX = 200;
+const thumbQueue = [];
+let thumbBusy = 0;
+function thumbInto(img, f) {
+  const done = thumbs.get(f);
+  if (typeof done === "string") { img.src = done; return; }
+  if (!done) thumbs.set(f, []);
+  thumbs.get(f).push(img);
+  if (done) return;                       // already queued: just wait for it
+  thumbQueue.push(f);
+  pumpThumbs();
+}
+function pumpThumbs() {
+  while (thumbBusy < 3 && thumbQueue.length) {
+    const f = thumbQueue.shift();
+    thumbBusy++;
+    makeThumb(f).then(url => {
+      const waiting = thumbs.get(f) || [];
+      thumbs.set(f, url);
+      waiting.forEach(img => { img.src = url; });
+    }).finally(() => { thumbBusy--; pumpThumbs(); });
+  }
+}
+async function makeThumb(f) {
+  try {
+    const bmp = await createImageBitmap(f, { resizeWidth: THUMB_PX, resizeQuality: "low" });
+    const c = document.createElement("canvas");
+    c.width = bmp.width; c.height = bmp.height;
+    c.getContext("2d").drawImage(bmp, 0, 0);
+    bmp.close();
+    const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.7));
+    return URL.createObjectURL(blob);
+  } catch {
+    return URL.createObjectURL(f);        // unreadable by the decoder: fall back to the file itself
+  }
 }
 function uniqueFiles() {
   const seen = new Set(), out = [];
@@ -273,6 +309,7 @@ const STYLE = `
     padding:6px;font:inherit;font-weight:400;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px}
   #mlh-modal textarea{min-height:120px;resize:vertical}
   #mlh-modal .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(82px,1fr));gap:6px;max-height:340px;overflow:auto;padding:2px}
+  #mlh-modal .ph[hidden]{display:none}
   #mlh-modal .ph{position:relative;cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid transparent}
   #mlh-modal .ph img{width:100%;aspect-ratio:1;object-fit:cover;display:block}
   #mlh-modal .ph .nm{font-size:10px;padding:1px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
@@ -294,6 +331,7 @@ function openEditor(row, cb) {
     title: isNew ? "" : get(row, "title"),
     price: isNew ? "" : get(row, "price"),
     category: isNew ? "" : get(row, "category"),
+    fb_url: isNew ? "" : get(row, "fb_url"),
     condition: isNew ? "" : get(row, "condition"),
     description: isNew ? "" : get(row, "description"),
     photos: isNew ? [] : photoList(row),
@@ -316,6 +354,7 @@ function openEditor(row, cb) {
           </div>
           <label>Category<input type="text" name="category" list="mlh-cats" placeholder="e.g. Furniture">
             <datalist id="mlh-cats">${categories.map(c => `<option value="${escapeHTML(c)}">`).join("")}</datalist></label>
+          <label>Facebook listing URL<input type="text" name="fb_url" placeholder="Filled in by “Link” on a Marketplace item page"></label>
           <label>Condition<select name="condition"><option value="">—</option>
             ${conditions.map(c => `<option>${escapeHTML(c)}</option>`).join("")}</select></label>
           <label>Description<textarea name="description"></textarea></label>
@@ -355,27 +394,35 @@ function openEditor(row, cb) {
   const m = back.querySelector("#mlh-modal");
   const q = s => m.querySelector(s);
   const field = n => q(`[name="${n}"]`);
-  for (const k of ["id", "title", "category", "condition", "description"]) field(k).value = draft[k];
+  for (const k of ["id", "title", "category", "fb_url", "condition", "description"]) field(k).value = draft[k];
   field("price").value = draft.price.replace(/[£,\s]/g, "");
 
-  function renderGrid() {
+  // The grid is built once per set of loaded photos; clicking only toggles classes/badges.
+  let cells = [];
+  const lazy = new IntersectionObserver(entries => {
+    for (const en of entries) {
+      if (!en.isIntersecting) continue;
+      lazy.unobserve(en.target);
+      thumbInto(en.target, en.target._file);
+    }
+  }, { root: q('[data-ref="grid"]'), rootMargin: "200px" });
+
+  function buildGrid() {
     const grid = q('[data-ref="grid"]');
-    const used = usedPhotoNames(row);
-    const onlyUnused = q('[data-ref="unused"]').checked;
-    const selLower = draft.photos.map(p => p.toLowerCase().split("/").pop());
+    lazy.disconnect();
     grid.innerHTML = "";
+    cells = [];
     const files = uniqueFiles();
     if (!files.length) grid.innerHTML = `<p class="mlh-muted">Load your photos folder first, or use “Add photos…”.</p>`;
+    const used = usedPhotoNames(row);
     for (const f of files) {
       const lower = f.name.toLowerCase();
-      const idx = selLower.indexOf(lower);
-      const isUsed = used.has(lower);
-      if (onlyUnused && isUsed && idx < 0) continue;
       const el = document.createElement("div");
-      el.className = "ph" + (idx >= 0 ? " sel" : "") + (isUsed && idx < 0 ? " used" : "");
-      el.title = f.name + (isUsed ? " (already paired with another item)" : "");
-      el.innerHTML = `<img alt=""><div class="nm"></div>${idx >= 0 ? `<span class="badge">${idx + 1}</span>` : ""}`;
-      el.querySelector("img").src = thumb(f);
+      el.className = "ph";
+      el.innerHTML = `<img alt="" decoding="async"><div class="nm"></div><span class="badge" hidden></span>`;
+      const img = el.querySelector("img");
+      img._file = f;
+      lazy.observe(img);
       el.querySelector(".nm").textContent = f.name;
       el.onclick = () => {
         const i = draft.photos.findIndex(p => p.toLowerCase().split("/").pop() === lower);
@@ -383,6 +430,22 @@ function openEditor(row, cb) {
         renderGrid();
       };
       grid.appendChild(el);
+      cells.push({ el, lower, isUsed: used.has(lower), badge: el.querySelector(".badge") });
+    }
+    renderGrid();
+  }
+
+  function renderGrid() {
+    const onlyUnused = q('[data-ref="unused"]').checked;
+    const selLower = draft.photos.map(p => p.toLowerCase().split("/").pop());
+    for (const c of cells) {
+      const idx = selLower.indexOf(c.lower);
+      c.el.classList.toggle("sel", idx >= 0);
+      c.el.classList.toggle("used", c.isUsed && idx < 0);
+      c.el.hidden = onlyUnused && c.isUsed && idx < 0;
+      c.el.title = c.el.querySelector(".nm").textContent + (c.isUsed ? " (already paired with another item)" : "");
+      c.badge.hidden = idx < 0;
+      if (idx >= 0) c.badge.textContent = idx + 1;
     }
     q('[data-ref="count"]').textContent = `(${draft.photos.length} selected)`;
     const missing = draft.photos.filter(p => !findPhoto(p));
@@ -390,9 +453,9 @@ function openEditor(row, cb) {
       ? `<span class="mlh-warn">Paired but not in loaded folder:</span> ${missing.map(escapeHTML).join(", ")} — <a href="#" data-act="dropmissing">remove</a>`
       : "";
   }
-  renderGrid();
+  buildGrid();
 
-  const close = () => back.remove();
+  const close = () => { lazy.disconnect(); back.remove(); };
   back.addEventListener("click", async e => {
     if (e.target === back) return close();
     const act = e.target.closest("[data-act]")?.dataset.act;
@@ -428,6 +491,8 @@ function openEditor(row, cb) {
       set(r, "category", field("category").value.trim());
       set(r, "condition", field("condition").value);
       set(r, "description", field("description").value.trim());
+      const fb = field("fb_url").value.trim();
+      if (fb || headerFor("fb_url")) set(r, "fb_url", fb);
       set(r, "photos", draft.photos.join(";"));
       if (isNew) { set(r, "status", "draft"); set(r, "listed", ""); rows.push(r); }
       await save(); close(); notify("saved", r, isNew);
@@ -451,7 +516,7 @@ function openEditor(row, cb) {
     addPhotoFiles(files, false);
     const have = new Set(draft.photos.map(p => p.toLowerCase()));
     files.filter(f => f.type.startsWith("image/")).forEach(f => { if (!have.has(f.name.toLowerCase())) draft.photos.push(f.name); });
-    renderGrid(); notify("photos");
+    buildGrid(); notify("photos");
   };
   back.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
   field(isNew ? "title" : "description").focus();

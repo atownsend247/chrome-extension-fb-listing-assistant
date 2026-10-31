@@ -136,6 +136,15 @@
         <div class="row" style="margin:4px 0 0"><button id="mlh-backup-now" class="primary">Export backup</button></div>
       </div>
       <div id="mlh-status" class="mlh-muted"></div>
+      <div id="mlh-link" class="banner" style="border-color:var(--accent)" hidden>
+        <strong>Link this Facebook listing</strong>
+        <div id="mlh-link-state" class="mlh-muted"></div>
+        <select id="mlh-link-pick"></select>
+        <div class="row" style="margin:0">
+          <button id="mlh-link-btn" class="primary">Link</button>
+          <button id="mlh-unlink">Unlink</button>
+        </div>
+      </div>
       <div id="mlh-main" hidden>
         <select id="mlh-pick"></select>
         <div id="mlh-info" class="mlh-muted"></div>
@@ -159,7 +168,76 @@
     </div>`;
   const $ = s => panel.querySelector(s);
 
+  // ---------- link an existing Facebook listing to an item ----------
+  // Read-only: remembers the item page's URL on the row; nothing is clicked on Facebook.
+  const itemIdFromPage = () => (location.pathname.match(/^\/marketplace\/item\/(\d+)/) || [])[1] || null;
+  const itemUrl = id => `https://www.facebook.com/marketplace/item/${id}/`;
+  const linkedRow = id => rows.find(r => get(r, "fb_url").includes(`/marketplace/item/${id}`));
+  const words = t => new Set((t.toLowerCase().match(/[a-z0-9]{3,}/g) || []));
+  let linkSig = null;
+
+  function updateLinkBox() {
+    const id = itemIdFromPage();
+    const box = $("#mlh-link");
+    const sig = id && `${id}|${rows.map(r => rowKey(r) + get(r, "fb_url")).join(",")}`;
+    if (sig === linkSig) return;
+    linkSig = sig;
+    box.hidden = !id || !rows.length;
+    if (box.hidden) return;
+    const have = linkedRow(id);
+    const sel = $("#mlh-link-pick");
+    sel.innerHTML = "";
+    // suggest the unlinked item whose title shares the most words with the page title
+    const pageWords = words(document.title);
+    let best = -1, bestScore = 0;
+    rows.forEach((r, i) => {
+      const o = document.createElement("option");
+      o.value = i;
+      o.textContent = get(r, "title") + (get(r, "fb_url") ? " (linked)" : "");
+      sel.appendChild(o);
+      if (!get(r, "fb_url")) {
+        const score = [...words(get(r, "title"))].filter(w => pageWords.has(w)).length;
+        if (score > bestScore) { best = i; bestScore = score; }
+      }
+    });
+    if (have) sel.value = rows.indexOf(have);
+    else if (best >= 0) sel.value = best;
+    else sel.selectedIndex = -1;
+    $("#mlh-link-state").textContent = have
+      ? `Linked to “${get(have, "title")}”.`
+      : "Not linked yet. Pick the item this listing is for.";
+    $("#mlh-link-btn").textContent = have ? "Re-link" : "Link";
+    $("#mlh-unlink").hidden = !have;
+  }
+
+  async function linkListing() {
+    const id = itemIdFromPage();
+    const r = rows[+$("#mlh-link-pick").value];
+    if (!id || !r) return;
+    if (get(r, "fb_url") && !get(r, "fb_url").includes(`/marketplace/item/${id}`) &&
+        !confirm(`“${get(r, "title")}” is already linked to a different listing. Replace that link?`)) return;
+    const other = linkedRow(id);
+    if (other && other !== r) set(other, "fb_url", "");
+    set(r, "fb_url", itemUrl(id));
+    if (get(r, "status").toLowerCase() !== "sold") set(r, "status", "listed");
+    if (!get(r, "listed")) set(r, "listed", new Date().toISOString().slice(0, 10));
+    await save();
+    current = rows.indexOf(r);
+    render();
+    $("#mlh-report").textContent = `Linked to “${get(r, "title")}”. Check its listed date if you posted it earlier.`;
+  }
+
+  async function unlinkListing() {
+    const have = linkedRow(itemIdFromPage());
+    if (!have) return;
+    set(have, "fb_url", "");
+    await save();
+    render();
+  }
+
   function render() {
+    linkSig = null;
+    updateLinkBox();
     const unpaired = rows.filter(r => !photoList(r).length && (get(r, "status") || "draft").toLowerCase() === "draft").length;
     $("#mlh-status").innerHTML =
       `${rows.length} item${rows.length === 1 ? "" : "s"} · ${uniqueFiles().length} photos loaded` +
@@ -195,13 +273,16 @@
       (age != null && age >= RENEW_DAYS && get(r, "status").toLowerCase() === "listed"
         ? `<br><span class="mlh-warn">Due a renew — listed ${age} days ago</span>` : "");
 
+    if (isWebUrl(get(r, "fb_url")))
+      $("#mlh-info").innerHTML += `<br><a href="${escapeHTML(get(r, "fb_url"))}" target="_blank" rel="noopener">Open on Facebook ↗</a>`;
+
     const strip = $("#mlh-strip");
     strip.innerHTML = "";
     const names = photoList(r);
     if (!names.length) strip.innerHTML = `<span class="mlh-muted">No photos paired — use Edit.</span>`;
     for (const n of names) {
       const f = findPhoto(n);
-      if (f) { const img = document.createElement("img"); img.src = thumb(f); img.title = n; strip.appendChild(img); }
+      if (f) { const img = document.createElement("img"); thumbInto(img, f); img.title = n; strip.appendChild(img); }
       else { const d = document.createElement("div"); d.className = "miss"; d.textContent = n; d.title = `${n} not in loaded folder`; strip.appendChild(d); }
     }
   }
@@ -234,6 +315,8 @@
   $("#mlh-edit").onclick = () => rows[current] && openEditor(rows[current], afterEdit);
   $("#mlh-csv-btn").onclick = () => $("#mlh-csv").click();
   $("#mlh-dir-btn").onclick = () => $("#mlh-dir").click();
+  $("#mlh-link-btn").onclick = linkListing;
+  $("#mlh-unlink").onclick = unlinkListing;
   $("#mlh-manager").onclick = () => chrome.runtime.sendMessage({ open: "manager" });
 
   $("#mlh-csv").onchange = async e => {
@@ -265,6 +348,7 @@
   function sync() {
     const on = location.pathname.startsWith("/marketplace");
     if (on && !panel.isConnected) document.body.appendChild(panel);
+    if (on) updateLinkBox();
     if (!on && panel.isConnected) { panel.remove(); document.getElementById("mlh-backdrop")?.remove(); }
   }
 
