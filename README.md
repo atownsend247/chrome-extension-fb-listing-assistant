@@ -1,4 +1,4 @@
-# Marketplace Listing Helper
+# Chrome Extension FB Marketplace Listing Assistant
 
 A small Chrome extension that keeps a list of things you're selling, pairs photos with
 each item, and pre-fills Facebook Marketplace's Create listing form.
