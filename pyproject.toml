@@ -1,0 +1,14 @@
+[project]
+name = "chrome-extension-fb-listing-assistant"
+version = "0.2.0"
+description = "Keep a folder of markdown posts in sync with a Ghost blog via the Admin API."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["markdown", "pyjwt", "requests"]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
