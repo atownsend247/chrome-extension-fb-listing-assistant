@@ -141,12 +141,17 @@
       </div>
       <div id="mlh-status" class="mlh-muted"></div>
       <div id="mlh-link" class="banner" style="border-color:var(--accent)" hidden>
-        <strong>Link this Facebook listing</strong>
+        <strong>This Facebook listing</strong>
         <div id="mlh-link-state" class="mlh-muted"></div>
-        <select id="mlh-link-pick"></select>
-        <div class="row" style="margin:0">
-          <button id="mlh-link-btn" class="primary">Link</button>
-          <button id="mlh-unlink">Unlink</button>
+        <div id="mlh-link-existing">
+          <select id="mlh-link-pick"></select>
+          <div class="row" style="margin:0">
+            <button id="mlh-link-btn" class="primary">Link</button>
+            <button id="mlh-unlink">Unlink</button>
+          </div>
+        </div>
+        <div class="row" style="margin:4px 0 0">
+          <button id="mlh-import" title="Read this page and add it to your list as a new item">Import as new item</button>
         </div>
       </div>
       <div id="mlh-main" hidden>
@@ -186,9 +191,12 @@
     const sig = id && `${id}|${rows.map(r => rowKey(r) + get(r, "fb_url")).join(",")}`;
     if (sig === linkSig) return;
     linkSig = sig;
-    box.hidden = !id || !rows.length;
+    box.hidden = !id;
     if (box.hidden) return;
     const have = linkedRow(id);
+    $("#mlh-link-existing").hidden = !rows.length;
+    $("#mlh-import").hidden = !!have;
+    if (!rows.length) { $("#mlh-link-state").textContent = "Not in your list yet."; return; }
     const sel = $("#mlh-link-pick");
     sel.innerHTML = "";
     // suggest the unlinked item whose title shares the most words with the page title
@@ -237,6 +245,97 @@
     set(have, "fb_url", "");
     await save();
     render();
+  }
+
+  // ---------- import an existing Facebook listing as a new item ----------
+  // Read-only: scrapes what the item page shows; nothing is clicked or changed on Facebook.
+  const pageRoot = () => document.querySelector('[role="main"]') || document.body;
+  const outsideUs = el => !el.closest("#mlh-panel, #mlh-modal");
+
+  // The text shown next to a label such as "Condition" in the listing's details.
+  function labelValue(label) {
+    const want = label.toLowerCase();
+    for (const el of pageRoot().querySelectorAll("span, div")) {
+      if (!outsideUs(el) || el.children.length || el.textContent.trim().toLowerCase() !== want) continue;
+      for (let n = el, hops = 0; n && n !== pageRoot() && hops < 4; n = n.parentElement, hops++) {
+        const next = n.nextElementSibling;
+        const t = next && next.innerText.trim();
+        if (t) return t.split("\n")[0].trim();
+      }
+    }
+    return "";
+  }
+
+  function scrapeListing() {
+    const root = pageRoot();
+    const h1 = [...root.querySelectorAll("h1")].find(outsideUs);
+    const meta = p => document.querySelector(`meta[property="${p}"]`)?.content || "";
+    const title = (h1 && h1.innerText.trim()) || meta("og:title") || document.title.replace(/\s*\|.*$/, "");
+    const priceM = ((h1 && (h1.parentElement.parentElement || h1.parentElement).innerText) || root.innerText).match(/£\s?([\d,]+(?:\.\d{1,2})?)/);
+    let description = labelValue("Seller's description") || labelValue("Description");
+    if (!description) description = meta("og:description");
+    // photos: the same picture appears at several sizes, so keep the biggest per file name
+    const best = new Map();
+    for (const img of root.querySelectorAll("img")) {
+      if (!outsideUs(img) || !/fbcdn|scontent/.test(img.src) || img.naturalWidth < 200) continue;
+      const key = new URL(img.src).pathname.split("/").pop();
+      if (!best.has(key) || best.get(key).naturalWidth < img.naturalWidth) best.set(key, img);
+    }
+    return {
+      title, price: priceM ? priceM[1].replace(/,/g, "") : "",
+      category: labelValue("Category"), condition: labelValue("Condition"),
+      description, urls: [...best.values()].map(i => i.src),
+    };
+  }
+
+  async function importListing() {
+    const fbId = itemIdFromPage();
+    const rep = $("#mlh-report");
+    if (!fbId) return;
+    if (linkedRow(fbId)) { rep.textContent = "This listing is already in your list."; return; }
+    const d = scrapeListing();
+    if (!d.title) { rep.textContent = "Couldn't read a title from this page."; return; }
+    const r = {};
+    const id = nextId();
+    set(r, "id", id);
+    set(r, "title", d.title);
+    set(r, "price", d.price);
+    set(r, "category", d.category);
+    set(r, "condition", d.condition);
+    set(r, "description", d.description);
+    set(r, "fb_url", itemUrl(fbId));
+    set(r, "status", "listed");
+    set(r, "listed", new Date().toISOString().slice(0, 10));
+
+    // fetch the photos so they're saved with the item and can be re-attached when relisting
+    const files = [];
+    for (let i = 0; i < d.urls.length; i++) {
+      rep.textContent = `Reading listing… photo ${i + 1}/${d.urls.length}`;
+      try {
+        const b = await (await fetch(d.urls[i])).blob();
+        if (!b.type.startsWith("image/")) continue;
+        const ext = b.type === "image/png" ? "png" : b.type === "image/webp" ? "webp" : "jpg";
+        files.push(new File([b], `${id}-${files.length + 1}.${ext}`, { type: b.type, lastModified: Date.now() }));
+      } catch { /* blocked or expired URL: counted below */ }
+    }
+    if (files.length) {
+      addPhotoFiles(files, false);
+      await saveToLibrary(files);
+      set(r, "photos", files.map(f => f.name).join(";"));
+    }
+    rows.push(r);
+    await save();
+    current = rows.indexOf(r);
+    render();
+    const miss = [["Title", d.title], ["Price", d.price], ["Category", d.category], ["Condition", d.condition], ["Description", d.description]]
+      .filter(([, v]) => !v).map(([k]) => k);
+    const lost = d.urls.length - files.length;
+    showReport([
+      ["Imported", `ok — “${d.title}”`],
+      ["Photos", d.urls.length ? lost ? `${files.length} of ${d.urls.length} saved (some couldn't be fetched)` : `${files.length} added` : "none found on page"],
+      ["Missing", miss.length ? `${miss.join(", ")} — fill in via Edit` : "ok"],
+    ]);
+    rep.insertAdjacentHTML("beforeend", `<p class="mlh-muted">Listed date is set to today and the description may be cut short by “See more” — check both via Edit.</p>`);
   }
 
   function render() {
@@ -321,6 +420,7 @@
   $("#mlh-dir-btn").onclick = () => $("#mlh-dir").click();
   $("#mlh-link-btn").onclick = linkListing;
   $("#mlh-unlink").onclick = unlinkListing;
+  $("#mlh-import").onclick = importListing;
   $("#mlh-manager").onclick = () => chrome.runtime.sendMessage({ open: "manager" });
 
   $("#mlh-csv").onchange = async e => {

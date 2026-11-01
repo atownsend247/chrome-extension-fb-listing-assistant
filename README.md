@@ -47,11 +47,17 @@ Items listed 7+ days ago show **⟳ renew** in the dropdown.
 
 ## Linking an existing Facebook listing
 For something you already posted: open its page on Facebook (`/marketplace/item/…`), and the panel
-shows **Link this Facebook listing**. Pick the item (the likeliest match is pre-selected from the page title)
+shows **This Facebook listing**. Pick the item (the likeliest match is pre-selected from the page title)
 and press **Link**. It saves the listing's URL on the item, marks it **listed** (today's date if it had none —
 edit the date in the manager if you posted earlier) and adds an **Open on Facebook ↗** link in the panel and
 a ↗ column in the manager. **Unlink** or the item form's *Facebook listing URL* field removes or edits it.
 Linking only records the address; it never clicks anything on Facebook. The URL is a CSV column (`fb_url`).
+
+### Importing an existing listing as a new item
+On the same page, **Import as new item** reads the listing (title, price, category, condition, description and
+photos) and adds it to your list as a **listed** item linked to that page, so you can relist or edit it later.
+Photos are fetched and saved with the item. It only reads the page; check the result in **Edit** — the listed
+date is set to today, and Facebook's “See more” can cut the description short.
 
 ## Backups
 The list lives only in this Chrome profile, so uninstalling the extension or clearing site data
