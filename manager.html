@@ -56,6 +56,7 @@
     <button id="csv-btn">Import CSV</button>
     <button id="export">Export CSV</button>
     <button id="dir-btn">Load photos folder</button>
+    <button id="clearphotos" title="Free the space used by saved photos">Clear saved photos</button>
     <button id="pairall" title="Pair photos to every draft that has none, by filename">Auto-pair drafts</button>
     <button id="tpl">Templates</button>
     <input id="csv" type="file" accept=".csv" hidden>
@@ -88,8 +89,8 @@
       <p class="muted">Import a CSV (see <code>sample-listings.csv</code>) or add an item to get started.</p>
     </div>
   </div>
-  <p class="muted">Edits here are saved straight away and show up in the Facebook panel. Photos picked here are
-    only used for pairing by filename — load the same folder in the Facebook panel to attach them when filling.</p>
+  <p class="muted">Edits here are saved straight away and show up in the Facebook panel. Photos from a folder you load are
+    saved (resized to 2000px) inside the extension, so you only need to load a folder again when you add new photos.</p>
 </main>
 <script src="shared.js"></script>
 <script src="manager.js"></script>

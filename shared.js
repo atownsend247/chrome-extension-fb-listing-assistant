@@ -25,6 +25,13 @@ let rows = [];           // listings (objects keyed by header)
 let photos = new Map();  // lowercase filename -> File (this page/session only)
 let thumbs = new Map();  // File -> object URL
 
+// Saved photo library: resized copies kept in chrome.storage.local so the folder
+// doesn't have to be reloaded every session. Index = { by, items: { lowername: {name,type,size,mtime,bytes} } }.
+const PHOTO_KEY = "mlh_p:", THUMB_KEY = "mlh_t:", PIDX_KEY = "mlh_pidx";
+const PHOTO_MAX_PX = 2000;          // longest side of a saved photo
+const KEEP_ORIGINAL_BYTES = 1500000; // small enough files are saved untouched
+let savedIndex = {};
+
 const SESSION = Math.random().toString(36).slice(2); // tags our own storage writes
 
 const escapeHTML = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -129,6 +136,9 @@ function watchStorage(onExternal) {
     let changed = false;
     if (d && d.by !== SESSION && d.headers) { headers = d.headers; rows = d.rows || []; changed = true; }
     if (m && m.by !== SESSION) { meta = { ...structuredClone(DEFAULT_META), ...m }; changed = true; }
+    if (ch[PIDX_KEY] && ch[PIDX_KEY].newValue?.by !== SESSION) {
+      loadSavedPhotos().then(onExternal);
+    }
     if (changed) onExternal();
   });
 }
@@ -215,7 +225,17 @@ function findPhoto(name) {
 const THUMB_PX = 200;
 const thumbQueue = [];
 let thumbBusy = 0;
+const savedThumbs = new Map();
 function thumbInto(img, f) {
+  if (!(f instanceof Blob)) {             // a saved photo: its thumbnail is in storage
+    const k = f.name.toLowerCase();
+    if (savedThumbs.has(k)) { img.src = savedThumbs.get(k); return; }
+    chrome.storage.local.get(THUMB_KEY + k).then(got => {
+      const u = got[THUMB_KEY + k];
+      if (u) { savedThumbs.set(k, u); img.src = u; }
+    });
+    return;
+  }
   const done = thumbs.get(f);
   if (typeof done === "string") { img.src = done; return; }
   if (!done) thumbs.set(f, []);
@@ -270,6 +290,103 @@ function autoPairNames(id, title) {
     if ((idRe && idRe.test(base)) || (ts && ts.length > 3 && slug(base).startsWith(ts))) out.push(f.name);
   }
   return out;
+}
+
+// ---------- saved photo library ----------
+async function loadSavedPhotos() {
+  const got = await chrome.storage.local.get(PIDX_KEY);
+  savedIndex = got[PIDX_KEY]?.items || {};
+  for (const [lower, e] of Object.entries(savedIndex)) {
+    if (!photos.has(lower)) photos.set(lower, { name: e.name, type: e.type, saved: true });
+  }
+  for (const [k, v] of [...photos]) if (v.saved && !savedIndex[k]) photos.delete(k);
+}
+
+function libraryStats() {
+  const items = Object.values(savedIndex);
+  return { count: items.length, bytes: items.reduce((n, e) => n + (e.bytes || 0), 0) };
+}
+
+const blobToDataURL = b => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(r.result);
+  r.onerror = () => rej(r.error);
+  r.readAsDataURL(b);
+});
+const canvasBlob = (c, type, q) => new Promise(r => c.toBlob(r, type, q));
+
+// Decode once; keep the file as-is if it is already small, otherwise shrink to JPEG.
+async function encodePhoto(f) {
+  const bmp = await createImageBitmap(f);
+  try {
+    const scale = Math.min(1, PHOTO_MAX_PX / Math.max(bmp.width, bmp.height));
+    let data, type = f.type;
+    if (scale === 1 && f.size <= KEEP_ORIGINAL_BYTES) {
+      data = await blobToDataURL(f);
+    } else {
+      const c = document.createElement("canvas");
+      c.width = Math.round(bmp.width * scale);
+      c.height = Math.round(bmp.height * scale);
+      c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+      data = await blobToDataURL(await canvasBlob(c, "image/jpeg", 0.88));
+      type = "image/jpeg";
+    }
+    const tc = document.createElement("canvas");
+    const ts = Math.min(1, THUMB_PX / bmp.width);
+    tc.width = Math.round(bmp.width * ts);
+    tc.height = Math.round(bmp.height * ts);
+    tc.getContext("2d").drawImage(bmp, 0, 0, tc.width, tc.height);
+    const thumbData = await blobToDataURL(await canvasBlob(tc, "image/jpeg", 0.7));
+    return { data, thumbData, type };
+  } finally { bmp.close(); }
+}
+
+// Save new/changed files (matched by name + size + modified time). Returns counts.
+async function saveToLibrary(files, onProgress) {
+  const byName = new Map();
+  for (const f of files) if (f instanceof Blob && f.type.startsWith("image/")) byName.set(f.name.toLowerCase(), f);
+  const todo = [...byName].filter(([k, f]) => {
+    const e = savedIndex[k];
+    return !(e && e.size === f.size && e.mtime === f.lastModified);
+  });
+  const out = { saved: 0, unchanged: byName.size - todo.length, failed: [] };
+  const writeIndex = () => chrome.storage.local.set({ [PIDX_KEY]: { by: SESSION, items: savedIndex } });
+  let done = 0;
+  for (const [k, f] of todo) {
+    try {
+      const { data, thumbData, type } = await encodePhoto(f);
+      await chrome.storage.local.set({ [PHOTO_KEY + k]: data, [THUMB_KEY + k]: thumbData });
+      savedIndex[k] = { name: f.name, type, size: f.size, mtime: f.lastModified, bytes: data.length + thumbData.length };
+      savedThumbs.delete(k);
+      out.saved++;
+    } catch { out.failed.push(f.name); }
+    if (++done % 10 === 0) await writeIndex();
+    if (onProgress) onProgress(done, todo.length);
+  }
+  await writeIndex();
+  return out;
+}
+
+// A real File for a photo, rebuilt from storage if it is only a saved placeholder.
+async function realFile(f) {
+  if (f instanceof Blob) return f;
+  const k = PHOTO_KEY + f.name.toLowerCase();
+  const url = (await chrome.storage.local.get(k))[k];
+  if (!url) return null;
+  const [head, b64] = url.split(",");
+  const bin = atob(b64), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const type = head.match(/^data:([^;]+)/)[1];
+  const name = type === "image/jpeg" && !/\.jpe?g$/i.test(f.name) ? f.name.replace(/\.[^.]+$/, "") + ".jpg" : f.name;
+  return new File([bytes], name, { type });
+}
+
+async function clearLibrary() {
+  const keys = Object.keys(savedIndex).flatMap(k => [PHOTO_KEY + k, THUMB_KEY + k]);
+  await chrome.storage.local.remove([...keys, PIDX_KEY]);
+  savedIndex = {};
+  savedThumbs.clear();
+  for (const [k, v] of [...photos]) if (v.saved) photos.delete(k);
 }
 
 // ---------- styles (main panel, manager page modals) ----------
@@ -517,6 +634,7 @@ function openEditor(row, cb) {
     const have = new Set(draft.photos.map(p => p.toLowerCase()));
     files.filter(f => f.type.startsWith("image/")).forEach(f => { if (!have.has(f.name.toLowerCase())) draft.photos.push(f.name); });
     buildGrid(); notify("photos");
+    saveToLibrary(files);
   };
   back.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
   field(isNew ? "title" : "description").focus();

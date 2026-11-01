@@ -80,10 +80,13 @@ In the New/Edit form, the right-hand side shows every photo in your loaded folde
 The panel shows thumbnails of the selected item's photos; a red dashed box means a
 paired filename isn't in the currently loaded folder.
 
-**Note:** browsers don't let extensions keep access to your files between sessions, so
-the list remembers photo *filenames* only. Load the photos folder once each time you
-start a listing session. Keep all item photos in that one folder (subfolders are fine);
-photos picked with "Add photos…" from elsewhere will need picking again next session.
+**Saved photos:** whenever you load a folder (or add photos), the extension keeps a copy inside the
+browser — photos over 2000px or 1.5 MB are shrunk to a 2000px JPEG, smaller ones are kept as they are —
+so you don't need to reload the folder each session. Reloading a folder only saves new or changed files.
+Saved photos are used for thumbnails, pairing and attaching when you press Fill. They take disk space
+(roughly 0.5 MB each); use **Clear saved photos** in the manager to remove them. Your item list and
+pairings are not affected. Photos Chrome can't decode (for example HEIC) aren't saved and need loading
+each session.
 
 ## CSV columns
 Headers are matched loosely (case-insensitive). Any other columns in your sheet are kept and exported.

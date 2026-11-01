@@ -61,7 +61,11 @@
   async function attachPhotos(names) {
     if (!names.length) return "none paired";
     const files = [], missing = [];
-    for (const n of names) { const f = findPhoto(n); f ? files.push(f) : missing.push(n); }
+    for (const n of names) {
+      const f = findPhoto(n);
+      const file = f && await realFile(f);
+      file ? files.push(file) : missing.push(n);
+    }
     if (!files.length) return photos.size ? `not in folder: ${missing.join(", ")}` : "load photos folder first";
     const input = [...document.querySelectorAll('input[type="file"]')]
       .filter(i => !i.closest("#mlh-panel, #mlh-modal"))
@@ -329,11 +333,17 @@
     render();
     $("#mlh-report").textContent = `Imported: ${added} new, ${updated} updated.`;
   };
-  $("#mlh-dir").onchange = e => {
-    const n = addPhotoFiles(e.target.files, true);
+  $("#mlh-dir").onchange = async e => {
+    const picked = [...e.target.files];
     e.target.value = "";
+    const n = addPhotoFiles(picked, true);
     render();
-    $("#mlh-report").textContent = `${n} photos loaded.`;
+    const rep = $("#mlh-report");
+    rep.textContent = `${n} photos loaded. Saving…`;
+    const r = await saveToLibrary(picked, (d, t) => { rep.textContent = `${n} photos loaded. Saving ${d}/${t}…`; });
+    render();
+    rep.textContent = `${n} photos loaded; ${r.saved} saved for next time` +
+      (r.failed.length ? `, ${r.failed.length} couldn't be saved (${r.failed.slice(0, 3).join(", ")})` : "") + ".";
   };
   $("#mlh-pick").onchange = e => { current = +e.target.value; $("#mlh-report").innerHTML = ""; render(); };
   $("#mlh-fill").onclick = fillCurrent;
@@ -352,7 +362,7 @@
     if (!on && panel.isConnected) { panel.remove(); document.getElementById("mlh-backdrop")?.remove(); }
   }
 
-  load().then(() => {
+  load().then(loadSavedPhotos).then(() => {
     const firstDraft = rows.findIndex(r => !["listed", "sold"].includes((get(r, "status") || "draft").toLowerCase()));
     current = firstDraft >= 0 ? firstDraft : rows.length ? 0 : -1;
     render();

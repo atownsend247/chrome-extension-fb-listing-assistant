@@ -11,7 +11,8 @@
     const drafts = rows.filter(r => statusOf(r) === "draft");
     const bare = drafts.filter(r => !photoList(r).length).length;
     $("#summary").innerHTML =
-      `${rows.length} item${rows.length === 1 ? "" : "s"} · ${drafts.length} draft${drafts.length === 1 ? "" : "s"} · ${uniqueFiles().length} photos loaded` +
+      `${rows.length} item${rows.length === 1 ? "" : "s"} · ${drafts.length} draft${drafts.length === 1 ? "" : "s"} · ${uniqueFiles().length} photos` +
+      (libraryStats().count ? ` (${libraryStats().count} saved, ${(libraryStats().bytes / 1048576).toFixed(0)} MB)` : "") +
       (bare ? ` · <span class="warn">${bare} draft${bare === 1 ? "" : "s"} without photos</span>` : "");
     const due = backupDue();
     $("#backup").hidden = !due;
@@ -161,12 +162,26 @@
   $("#backup-now").onclick = exportCSV;
 
   $("#dir-btn").onclick = () => $("#dir").click();
-  $("#dir").onchange = e => {
-    const n = addPhotoFiles(e.target.files, true);
+  $("#dir").onchange = async e => {
+    const picked = [...e.target.files];
     e.target.value = "";
+    const n = addPhotoFiles(picked, true);
     renderTable();
     renderSummary();
-    say(`${n} photos loaded. Use Auto-pair drafts, or open an item to pick photos by hand.`);
+    say(`${n} photos loaded. Saving for next time…`);
+    const r = await saveToLibrary(picked, (d, t) => say(`${n} photos loaded. Saving ${d}/${t}…`));
+    renderSummary();
+    say(`${n} photos loaded; ${r.saved} saved for next time` +
+      (r.failed.length ? `, ${r.failed.length} couldn't be saved (${r.failed.slice(0, 3).join(", ")})` : "") +
+      `. Use Auto-pair drafts, or open an item to pick photos by hand.`);
+  };
+  $("#clearphotos").onclick = async () => {
+    if (!libraryStats().count) return say("No saved photos.");
+    if (!confirm("Remove all saved photos from the extension? Your item list and photo pairings are kept.")) return;
+    await clearLibrary();
+    renderTable();
+    renderSummary();
+    say("Saved photos removed.");
   };
 
   // Pair every draft that has no photos yet with files named after its id or title,
@@ -190,7 +205,7 @@
   };
 
   // the Facebook panel changed the list: pick it up
-  load().then(() => {
+  load().then(loadSavedPhotos).then(() => {
     renderTable();
     renderSummary();
     watchStorage(() => { renderTable(); renderSummary(); });
